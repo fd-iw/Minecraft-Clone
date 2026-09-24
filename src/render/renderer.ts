@@ -3,6 +3,7 @@ import type { World } from '../engine/world';
 import type { WorkerPool } from '../workers/pool';
 import { createChunkUniforms, type ChunkUniforms } from './chunkMaterial';
 import { ChunkRenderer } from './chunkRenderer';
+import { Clouds } from './clouds';
 import { Sky } from './sky';
 import { createBlockTextureArray } from './textures/atlas';
 
@@ -31,6 +32,7 @@ export class Renderer {
   readonly uniforms: ChunkUniforms;
   readonly chunks: ChunkRenderer;
   readonly sky: Sky;
+  readonly clouds: Clouds;
   private readonly selection: THREE.LineSegments;
   private readonly atlas: THREE.DataArrayTexture;
   private renderDistance = 8;
@@ -56,7 +58,8 @@ export class Renderer {
     this.uniforms = createChunkUniforms(this.atlas);
     this.chunks = new ChunkRenderer(world, pool, this.uniforms);
     this.sky = new Sky();
-    this.scene.add(this.sky.group, this.chunks.group);
+    this.clouds = new Clouds();
+    this.scene.add(this.sky.group, this.chunks.group, this.clouds.mesh);
 
     const edges = new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1));
     this.selection = new THREE.LineSegments(
@@ -126,6 +129,7 @@ export class Renderer {
     else u.uFogColor.value.copy(sky.fogColor);
     this.gl.setClearColor(u.uFogColor.value);
 
+    this.clouds.update(cam, t, sky.daylight, this.renderDistance);
     this.chunks.update(pose.x, pose.z);
     this.gl.render(this.scene, cam);
   }

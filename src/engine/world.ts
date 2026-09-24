@@ -1,10 +1,20 @@
 import { Emitter } from '../shared/events';
+import { Rng } from '../shared/rng';
 import { canSurvive } from './behavior';
 import { AIR, blockType } from './blocks';
 import { Chunk, chunkIndex, chunkKey } from './chunk';
 import { CHUNK_SIZE, DAY_LENGTH_TICKS, WORLD_HEIGHT } from './constants';
 import { FACE_DX, FACE_DY, FACE_DZ } from './facing';
 import { LightEngine, type ChunkSource } from './lighting';
+import { RANDOM_TICKING, neighbourChanged, randomTick, scheduledTick, type TickWorld } from './ticks';
+
+/** Random block updates per 16^3 section per tick. */
+export const RANDOM_TICKS_PER_SECTION = 3;
+/** Max scheduled updates processed per tick (guards against runaway cascades). */
+const MAX_SCHEDULED_PER_TICK = 4096;
+
+const posKey = (x: number, y: number, z: number): number =>
+  ((x + 0x100000) * 0x200000 + (z + 0x100000)) * 256 + y;
 
 export interface BlockChange {
   x: number;
@@ -26,7 +36,7 @@ export interface WorldEvents {
  * Authoritative block world. Holds loaded chunks, keeps light up to date and tracks which
  * chunks need re-meshing. Contains no rendering or DOM code so it can run headless.
  */
-export class World implements ChunkSource {
+export class World implements ChunkSource, TickWorld {
   readonly chunks = new Map<number, Chunk>();
   readonly light: LightEngine;
   readonly events = new Emitter<WorldEvents>();
@@ -36,9 +46,18 @@ export class World implements ChunkSource {
   time = 0;
   /** Time of day in ticks, 0..DAY_LENGTH_TICKS (0 = sunrise, 6000 = noon). */
   dayTime = 1000;
+  /** Whether time of day advances. */
+  daylightCycle = true;
+  /** Block positions around which random ticks run, and their radius in chunks. */
+  tickCenters: [number, number][] = [];
+  randomTickRadius = 6;
+  private readonly scheduled = new Map<number, number[]>();
+  private readonly scheduledKeys = new Set<number>();
+  private readonly rng: Rng;
 
   constructor(readonly seed: number) {
     this.light = new LightEngine(this);
+    this.rng = new Rng(seed ^ 0x51ed270b);
   }
 
   getChunk(cx: number, cz: number): Chunk | undefined {
@@ -145,20 +164,98 @@ export class World implements ChunkSource {
     if (n) this.dirty.add(n);
   }
 
-  /** Re-checks the six neighbours of a changed block, removing any that can no longer stay. */
+  /**
+   * Re-checks the changed block and its six neighbours: removes blocks that can no longer stay
+   * and schedules fluid / falling-block updates.
+   */
   private notifyNeighbours(x: number, y: number, z: number): void {
+    const self = this.getBlock(x, y, z);
+    if (self !== AIR) neighbourChanged(this, x, y, z, self);
     for (let f = 0; f < 6; f++) {
       const nx = x + FACE_DX[f];
       const ny = y + FACE_DY[f];
       const nz = z + FACE_DZ[f];
       const v = this.getBlock(nx, ny, nz);
       if (blockType(v) === AIR) continue;
-      if (!canSurvive(this, nx, ny, nz, v)) this.setBlock(nx, ny, nz, AIR, 'update');
+      if (!canSurvive(this, nx, ny, nz, v)) {
+        this.setBlock(nx, ny, nz, AIR, 'update');
+        continue;
+      }
+      neighbourChanged(this, nx, ny, nz, v);
     }
+  }
+
+  scheduleTick(x: number, y: number, z: number, delay: number): void {
+    if (y < 0 || y >= WORLD_HEIGHT) return;
+    const key = posKey(x, y, z);
+    if (this.scheduledKeys.has(key)) return;
+    this.scheduledKeys.add(key);
+    const due = this.time + Math.max(1, delay);
+    let bucket = this.scheduled.get(due);
+    if (!bucket) {
+      bucket = [];
+      this.scheduled.set(due, bucket);
+    }
+    bucket.push(x, y, z);
+  }
+
+  /** Number of pending scheduled block updates. */
+  get pendingTicks(): number {
+    return this.scheduledKeys.size;
   }
 
   tick(): void {
     this.time++;
-    this.dayTime = (this.dayTime + 1) % DAY_LENGTH_TICKS;
+    if (this.daylightCycle) this.dayTime = (this.dayTime + 1) % DAY_LENGTH_TICKS;
+    this.runScheduledTicks();
+    this.runRandomTicks();
+  }
+
+  private runScheduledTicks(): void {
+    const bucket = this.scheduled.get(this.time);
+    if (!bucket) return;
+    this.scheduled.delete(this.time);
+    let processed = 0;
+    for (let i = 0; i < bucket.length; i += 3) {
+      const x = bucket[i];
+      const y = bucket[i + 1];
+      const z = bucket[i + 2];
+      this.scheduledKeys.delete(posKey(x, y, z));
+      if (processed++ >= MAX_SCHEDULED_PER_TICK) {
+        this.scheduleTick(x, y, z, 1);
+        continue;
+      }
+      if (!this.isLoaded(x, z)) continue;
+      scheduledTick(this, x, y, z);
+    }
+  }
+
+  private runRandomTicks(): void {
+    if (this.tickCenters.length === 0) return;
+    const r = this.randomTickRadius;
+    const visited = new Set<number>();
+    for (const [px, pz] of this.tickCenters) {
+      const ccx = px >> 4;
+      const ccz = pz >> 4;
+      for (let dz = -r; dz <= r; dz++)
+        for (let dx = -r; dx <= r; dx++) {
+          const c = this.getChunk(ccx + dx, ccz + dz);
+          if (!c || visited.has(c.key)) continue;
+          visited.add(c.key);
+          const x0 = c.cx * CHUNK_SIZE;
+          const z0 = c.cz * CHUNK_SIZE;
+          for (let s = 0; s < c.sectionCounts.length; s++) {
+            if (c.sectionCounts[s] === 0) continue;
+            for (let n = 0; n < RANDOM_TICKS_PER_SECTION; n++) {
+              const bits = this.rng.nextU32();
+              const lx = bits & 15;
+              const ly = (s << 4) | ((bits >> 4) & 15);
+              const lz = (bits >> 8) & 15;
+              const t = c.blocks[chunkIndex(lx, ly, lz)] >> 4;
+              if (RANDOM_TICKING.has(t)) randomTick(this, x0 + lx, ly, z0 + lz, this.rng);
+            }
+          }
+        }
+    }
   }
 }

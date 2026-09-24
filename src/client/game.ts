@@ -376,6 +376,8 @@ export class Game {
 
     this.updateTarget(1);
     this.handleInteraction();
+    this.world.tickCenters = [[Math.floor(body.x), Math.floor(body.z)]];
+    this.world.randomTickRadius = Math.min(6, this.settings.renderDistance);
     this.world.tick();
     if (this.ticks % 600 === 0) void this.save();
   }

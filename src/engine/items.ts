@@ -35,14 +35,15 @@ function add(def: ItemDef): ItemDef {
   return def;
 }
 
-const NOT_ITEMS = new Set([0, WATER, LAVA, LIT_FURNACE, WHEAT]);
+const NOT_ITEMS = new Set([0, LIT_FURNACE, WHEAT]);
+const DISPLAY_OVERRIDES: Record<number, string> = { [WATER]: 'Water Source', [LAVA]: 'Lava Source' };
 
 for (const b of BLOCKS) {
   if (!b || NOT_ITEMS.has(b.id)) continue;
   add({
     id: b.id,
     name: b.name,
-    displayName: b.displayName,
+    displayName: DISPLAY_OVERRIDES[b.id] ?? b.displayName,
     maxStack: 64,
     block: b.id,
     maxDamage: 0,

@@ -240,6 +240,24 @@ if (TEST || import.meta.env.DEV) {
     blockAt: (x: number, y: number, z: number) => app.game?.blockAt(x, y, z) ?? -1,
     saveNow: () => app.game?.save(),
     player: () => app.game?.player.save() ?? null,
+    setBlock: (x: number, y: number, z: number, v: number) =>
+      app.game?.world.setBlock(x, y, z, v, 'update') ?? false,
+    look: (yaw: number, pitch: number) => {
+      if (!app.game) return;
+      app.game.player.body.yaw = yaw;
+      app.game.player.body.pitch = pitch;
+    },
+    teleport: (x: number, y: number, z: number) => {
+      const b = app.game?.player.body;
+      if (b) {
+        b.setPosition(x, y, z);
+        b.flying = true;
+      }
+    },
+    height: (x: number, z: number) => app.game?.world.getHeight(x, z) ?? -1,
+    setTime: (t: number) => {
+      if (app.game) app.game.world.dayTime = t;
+    },
     debug: () => app.game?.debugLines() ?? [],
   };
 }

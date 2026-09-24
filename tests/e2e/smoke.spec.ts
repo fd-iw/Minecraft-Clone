@@ -57,3 +57,42 @@ test('world generates, renders and persists edits', async ({ page }) => {
   expect(after).toBe(placed!.value);
   expect(errors).toEqual([]);
 });
+
+test('water flows from a placed source and renders', async ({ page }) => {
+  const errors = collectErrors(page);
+  await page.goto('/?test=1&autostart=1&fresh=1&seed=fluids&rd=4&world=fluids');
+  await page.waitForFunction(() => window.__stratavale?.state === 'playing', null, { timeout: 60_000 });
+  const WATER = 9 << 4;
+  const STONE = 1 << 4;
+  const info = await page.evaluate(
+    ({ WATER, STONE }) => {
+      const h = window.__stratavale as unknown as {
+        player(): { x: number; z: number };
+        height(x: number, z: number): number;
+        setBlock(x: number, y: number, z: number, v: number): boolean;
+        teleport(x: number, y: number, z: number): void;
+        look(yaw: number, pitch: number): void;
+      };
+      const p = h.player();
+      const x = Math.floor(p.x) + 6;
+      const z = Math.floor(p.z);
+      const y = h.height(x, z) + 4;
+      // A stone pillar with a platform, and a water source on top.
+      for (let dy = -4; dy < 0; dy++) h.setBlock(x, y + dy, z, STONE);
+      for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) h.setBlock(x + dx, y, z + dz, STONE);
+      h.setBlock(x, y + 1, z, WATER);
+      h.teleport(x - 7, y + 3, z + 0.5);
+      h.look(-Math.PI / 2, -0.35);
+      return { x, y, z };
+    },
+    { WATER, STONE },
+  );
+  await page.waitForTimeout(4000);
+  const spread = await page.evaluate(
+    ({ x, y, z }) => window.__stratavale.blockAt(x + 1, y + 1, z) >> 4,
+    info,
+  );
+  expect(spread).toBe(9);
+  await page.screenshot({ path: 'test-results/fluids.png' });
+  expect(errors).toEqual([]);
+});

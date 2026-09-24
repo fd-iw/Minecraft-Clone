@@ -53,6 +53,7 @@ export interface BlockTable {
   readonly fixedTint: Uint32Array; // [type]
   readonly waves: Uint8Array; // [type] 1 = leaves sway, 2 = plant tops sway
   readonly fluid: Uint8Array; // [type]
+  readonly solid: Uint8Array; // [type]
 }
 
 let cached: BlockTable | null = null;
@@ -71,6 +72,7 @@ export function blockTable(): BlockTable {
   const fixedTint = new Uint32Array(BLOCK_TYPE_COUNT);
   const waves = new Uint8Array(BLOCK_TYPE_COUNT);
   const fluid = new Uint8Array(BLOCK_TYPE_COUNT);
+  const solid = new Uint8Array(BLOCK_TYPE_COUNT);
 
   for (const def of BLOCKS) {
     if (!def) continue;
@@ -113,12 +115,25 @@ export function blockTable(): BlockTable {
     selfCull[t] = def.selfCull ? 1 : 0;
     fixedTint[t] = def.tint;
     fluid[t] = def.fluid ? 1 : 0;
+    solid[t] = def.solid ? 1 : 0;
     if (t === GRASS_BLOCK || t === TALL_GRASS || t === SUGAR_CANE) tintKind[t] = TintKind.Grass;
     else if (t === OAK_LEAVES) tintKind[t] = TintKind.Foliage;
     else if (t === WATER) tintKind[t] = TintKind.Water;
     if (t === OAK_LEAVES || t === SPRUCE_LEAVES || t === BIRCH_LEAVES) waves[t] = 1;
     else if (def.shape === 'cross' && t !== SUGAR_CANE) waves[t] = 2;
   }
-  cached = { faceLayer, faceFrames, shape, layer, opaque, selfCull, tintKind, fixedTint, waves, fluid };
+  cached = {
+    faceLayer,
+    faceFrames,
+    shape,
+    layer,
+    opaque,
+    selfCull,
+    tintKind,
+    fixedTint,
+    waves,
+    fluid,
+    solid,
+  };
   return cached;
 }

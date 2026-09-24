@@ -20,6 +20,7 @@ import { AABB } from './physics/aabb';
 import type { RayHit } from './physics/raycast';
 import type { Player } from './player';
 import { collisionBoxes } from './shapes';
+import { LEAVES, PERSISTENT_LEAVES } from './ticks';
 import type { World } from './world';
 
 /** Blocks whose "front" texture should face the player when placed (meta 0..3 = S, W, N, E). */
@@ -60,6 +61,7 @@ export function stateForPlacement(type: number, damage: number, face: number, ya
     return makeBlock(LADDER, WALL_INDEX[OPPOSITE_FACE[face]]);
   }
   if (FACING_BLOCKS.has(type)) return makeBlock(type, facingMetaTowardsPlayer(yaw));
+  if (LEAVES.has(type)) return makeBlock(type, PERSISTENT_LEAVES);
   if (def.variantMeta) return makeBlock(type, damage);
   return makeBlock(type, 0);
 }

@@ -1,4 +1,5 @@
 import { GRASS_BLOCK, blockMeta } from '../../engine/blocks';
+import { fluidHeight } from '../../engine/fluids';
 import { biomeInfo } from '../../engine/worldgen/biomes';
 import { Layer, Shape, TintKind, blockTable } from './blockTable';
 
@@ -151,6 +152,34 @@ for (let f = 0; f < 6; f++) {
     AO_SIDE1[f * 4 + k] = (c[a] ? 1 : -1) * AXIS_STRIDE[a];
     AO_SIDE2[f * 4 + k] = (c[b] ? 1 : -1) * AXIS_STRIDE[b];
   }
+}
+
+/** Fluid surface height at a cell corner, as in classic block games (weighted neighbour average). */
+function fluidCorner(
+  blocks: Uint16Array,
+  solid: Uint8Array,
+  t: number,
+  idx: number,
+  cx: number,
+  cz: number,
+): number {
+  let sum = 0;
+  let weight = 0;
+  for (let dz = cz - 1; dz <= cz; dz++)
+    for (let dx = cx - 1; dx <= cx; dx++) {
+      const i = idx + dx * SX + dz * SZ;
+      if (blocks[i + SY] >> 4 === t) return 16;
+      const nv = blocks[i];
+      if (nv >> 4 === t) {
+        const m = nv & 15;
+        const w = m === 0 || m >= 8 ? 10 : 1;
+        sum += fluidHeight(m) * w;
+        weight += w;
+      } else if (!solid[nv >> 4]) {
+        weight += 1;
+      }
+    }
+  return weight > 0 ? Math.round((sum / weight) * 16) : 14;
 }
 
 const to565 = (rgb: number): number =>
@@ -348,15 +377,20 @@ export function meshColumn(input: MeshInput): MeshOutput {
         }
 
         if (shape === Shape.Fluid) {
-          const above = blocks[idx + SY] >> 4;
-          const top = above === t ? 16 : 14;
+          // Corner heights (1/16 units) averaged from surrounding fluid levels, so flowing
+          // fluid slopes away from its source.
+          const ch = [0, 0, 0, 0]; // (0,0) (1,0) (0,1) (1,1)
+          for (let c = 0; c < 4; c++) ch[c] = fluidCorner(blocks, T.solid, t, idx, c & 1, c >> 1);
+          const cornerH = (cx: number, cz: number): number => ch[cz * 2 + cx];
+          const aboveSame = blocks[idx + SY] >> 4 === t;
           for (let f = 0; f < 6; f++) {
             const ni = idx + NEIGHBOUR[f];
             const nt = blocks[ni] >> 4;
             if (nt === t) continue;
+            if (f === 2 && aboveSame) continue;
             if (f !== 2 && T.opaque[nt]) continue;
             const fi = v * 6 + f;
-            setFlatLight(f === 2 && top === 16 ? idx : ni);
+            setFlatLight(f === 2 ? idx : ni);
             if (f !== 2) {
               // Side/bottom faces take the brighter of this cell and the neighbour.
               const l0 = light[idx];
@@ -367,16 +401,26 @@ export function meshColumn(input: MeshInput): MeshOutput {
                 qsky[k] = sky;
                 qblk[k] = blk;
               }
+            } else {
+              // The surface is lit by whatever is above it.
+              const la = light[idx + SY];
+              const sky = Math.max(light[idx] >> 4, la >> 4) * 4;
+              const blk = Math.max(light[idx] & 15, la & 15) * 4;
+              for (let k = 0; k < 4; k++) {
+                qsky[k] = sky;
+                qblk[k] = blk;
+              }
             }
             for (let k = 0; k < 4; k++) {
               const c = CORNERS[f][k];
+              const h = c[1] ? cornerH(c[0], c[2]) : 0;
               qx[k] = (x + c[0]) * 16;
-              qy[k] = wy * 16 + (c[1] ? top : 0);
+              qy[k] = wy * 16 + h;
               qz[k] = (z + c[2]) * 16;
               qu[k] = UVS[f][k][0] * 16;
-              qv[k] = f === 2 || f === 3 ? UVS[f][k][1] * 16 : c[1] ? 16 - top : 16;
+              qv[k] = f === 2 || f === 3 ? UVS[f][k][1] * 16 : c[1] ? 16 - h : 16;
               qtint[k] = tintAt(kind, t, x + c[0], z + c[2]);
-              qwave[k] = f === 2 && top < 16 ? 3 : 0;
+              qwave[k] = f === 2 && h < 16 ? 3 : 0;
             }
             emit(buf, T.faceLayer[fi], T.faceFrames[fi], f, false);
             if (f === 2) emit(buf, T.faceLayer[fi], T.faceFrames[fi], f, true);
