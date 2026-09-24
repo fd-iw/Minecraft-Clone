@@ -322,6 +322,8 @@ export class ChunkGenerator {
     x0: number,
     z0: number,
   ): void {
+    // Pumpkins grow in rare patches rather than scattered everywhere.
+    const pumpkinPatch = hash2(this.seed ^ 0x9a3, x0 >> 4, z0 >> 4) % 28 === 0;
     for (let z = 0; z < CHUNK_SIZE; z++) {
       for (let x = 0; x < CHUNK_SIZE; x++) {
         const wx = x0 + x;
@@ -347,14 +349,14 @@ export class ChunkGenerator {
             continue;
           }
           const grassChance =
-            biome === Biome.Plains || biome === Biome.Savanna ? 0.28 : biome === Biome.Swamp ? 0.2 : 0.12;
-          if (r < grassChance) blocks[above] = makeBlock(TALL_GRASS);
+            biome === Biome.Plains || biome === Biome.Savanna ? 0.2 : biome === Biome.Swamp ? 0.16 : 0.1;
+          if (pumpkinPatch && r > 0.96 && biome !== Biome.Swamp)
+            blocks[above] = makeBlock(PUMPKIN, hash2(this.seed, wx, wz) & 3);
+          else if (r < grassChance) blocks[above] = makeBlock(TALL_GRASS);
           else if (r < grassChance + 0.015)
             blocks[above] = makeBlock(
               biome === Biome.Taiga ? BLUE_FLOWER : r < grassChance + 0.009 ? YELLOW_FLOWER : RED_FLOWER,
             );
-          else if (r < grassChance + 0.017 && biome === Biome.Plains)
-            blocks[above] = makeBlock(PUMPKIN, hash2(this.seed, wx, wz) & 3);
           else if (r < grassChance + 0.02 && (biome === Biome.Taiga || biome === Biome.Swamp))
             blocks[above] = makeBlock(r < grassChance + 0.018 ? BROWN_MUSHROOM : RED_MUSHROOM);
         } else if (topType === SAND && biome === Biome.Desert && y >= SEA_LEVEL) {
